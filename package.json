@@ -1,0 +1,273 @@
+{
+  "name": "alivetabs",
+  "displayName": "Alive TABs",
+  "description": "Color your editor tabs and mark files with colored flags.",
+  "version": "0.3.3",
+  "publisher": "WebieAPP",
+  "author": {
+    "name": "Himanshu Verma",
+    "email": "himan.verma@live.com"
+  },
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/himanverma/alive-tabs.git"
+  },
+  "homepage": "https://github.com/himanverma/alive-tabs#readme",
+  "bugs": {
+    "url": "https://github.com/himanverma/alive-tabs/issues"
+  },
+  "keywords": [
+    "tabs",
+    "tab color",
+    "flags",
+    "bookmarks",
+    "colorize",
+    "editor tabs",
+    "windsurf",
+    "devin"
+  ],
+  "galleryBanner": {
+    "color": "#1e1e24",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "alivetabs.setPreset",
+        "title": "Set Flag & Color Preset",
+        "category": "Alive TABs",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "alivetabs.setFlag",
+        "title": "Set Flag",
+        "category": "Alive TABs",
+        "icon": "$(flag)"
+      },
+      {
+        "command": "alivetabs.setColor",
+        "title": "Set Tab Color",
+        "category": "Alive TABs",
+        "icon": "$(symbol-color)"
+      },
+      {
+        "command": "alivetabs.switchTabStyle",
+        "title": "Switch Tab Style",
+        "category": "Alive TABs",
+        "icon": "$(paintcan)"
+      },
+      {
+        "command": "alivetabs.showOverview",
+        "title": "Show Flagged Files",
+        "category": "Alive TABs",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "alivetabs.clear",
+        "title": "Clear Flag & Color",
+        "category": "Alive TABs",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "alivetabs.clearAll",
+        "title": "Clear All Flags & Colors",
+        "category": "Alive TABs",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "alivetabs.enableDeepMode",
+        "title": "Enable Deep Mode (workbench patch)",
+        "category": "Alive TABs"
+      },
+      {
+        "command": "alivetabs.disableDeepMode",
+        "title": "Disable Deep Mode",
+        "category": "Alive TABs"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "alivetabs",
+        "label": "Alive TABs",
+        "icon": "$(symbol-color)"
+      }
+    ],
+    "menus": {
+      "alivetabs": [
+        {
+          "command": "alivetabs.setPreset",
+          "group": "1_mark@1"
+        },
+        {
+          "command": "alivetabs.setFlag",
+          "group": "1_mark@2"
+        },
+        {
+          "command": "alivetabs.setColor",
+          "group": "1_mark@3"
+        },
+        {
+          "command": "alivetabs.switchTabStyle",
+          "group": "2_view@1"
+        },
+        {
+          "command": "alivetabs.showOverview",
+          "group": "2_view@2"
+        },
+        {
+          "command": "alivetabs.clear",
+          "group": "3_clear@1"
+        },
+        {
+          "command": "alivetabs.clearAll",
+          "group": "3_clear@2"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "submenu": "alivetabs",
+          "group": "alivetabs@1"
+        }
+      ],
+      "webview/context": [
+        {
+          "submenu": "alivetabs",
+          "group": "alivetabs@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "submenu": "alivetabs",
+          "group": "alivetabs@1",
+          "when": "resourceScheme == file"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "alivetabs.setPreset"
+        },
+        {
+          "command": "alivetabs.setFlag"
+        },
+        {
+          "command": "alivetabs.setColor"
+        },
+        {
+          "command": "alivetabs.switchTabStyle"
+        },
+        {
+          "command": "alivetabs.showOverview"
+        },
+        {
+          "command": "alivetabs.clear"
+        },
+        {
+          "command": "alivetabs.clearAll"
+        },
+        {
+          "command": "alivetabs.enableDeepMode"
+        },
+        {
+          "command": "alivetabs.disableDeepMode"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Alive TABs",
+      "properties": {
+        "alivetabs.tabStyle": {
+          "type": "string",
+          "enum": [
+            "tinted",
+            "full",
+            "border"
+          ],
+          "enumDescriptions": [
+            "Neon-pill translucent tint + glowing border (matches the Alive TABs icon).",
+            "Solid vibrant background fill with high-contrast text.",
+            "Minimalist colored top/bottom accent bar + colored filename."
+          ],
+          "default": "tinted",
+          "description": "Visual style used to color marked editor tabs."
+        },
+        "alivetabs.flagPosition": {
+          "type": "string",
+          "enum": [
+            "suffix",
+            "prefix"
+          ],
+          "default": "suffix",
+          "description": "Where to place the flag in the tab label."
+        },
+        "alivetabs.showStatusBarItem": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Alive TABs status bar indicator."
+        },
+        "alivetabs.useCustomLabels": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also write flag patterns to workbench.editor.customLabels.patterns in .vscode/settings.json."
+        },
+        "alivetabs.colorActiveTab": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also write tab.activeBackground to workbench.colorCustomizations in .vscode/settings.json."
+        },
+        "alivetabs.rules": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": ["pattern"],
+            "properties": {
+              "pattern": { "type": "string" },
+              "flag": { "type": "string", "maxLength": 10 },
+              "color": { "type": "string" }
+            }
+          },
+          "markdownDescription": "Auto-apply a flag/color to file tabs matching a glob. Patterns containing `/` match the workspace-relative path; patterns without `/` match the file basename. First match wins; stored marks take precedence. Example: `[{ \"pattern\": \"**/*.test.*\", \"flag\": \"🧪\" }]`"
+        },
+        "alivetabs.presets": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": ["name", "flag", "color"],
+            "properties": {
+              "name": { "type": "string" },
+              "flag": { "type": "string", "maxLength": 10 },
+              "color": { "type": "string", "pattern": "^#?[0-9a-fA-F]{3,6}$" }
+            }
+          },
+          "markdownDescription": "Extra entries in the *Set Flag & Color Preset* picker, e.g. `[{ \"name\": \"Design\", \"flag\": \"🎨\", \"color\": \"#0ea5e9\" }]`."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies",
+    "test": "node --test 'tests/*.test.js'",
+    "publish:ovsx": "bash -c 'set -a && [ -f .env.local ] && . ./.env.local; npm run compile && npx @vscode/vsce package --no-dependencies && npx ovsx publish alivetabs-${npm_package_version}.vsix'"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.99.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.7.2"
+  }
+}
