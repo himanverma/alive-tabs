@@ -5,6 +5,7 @@ export interface TabMark {
   color?: string;  // hex color, e.g. "#e11d48"
   label?: string;  // friendly display name for non-file tabs (e.g. "Claude Code")
   viewType?: string; // webview viewType used to re-attach marks across panel re-opens
+  tabSlot?: string; // best-effort stable slot for duplicate session tabs
   migratedFrom?: string; // previous URI key, set when a mark is auto-migrated
   ts?: number;     // epoch ms of last update
 }
@@ -67,11 +68,17 @@ export class TabState implements vscode.Disposable {
   }
 
   /** Move a mark from a stale key to a live URI (save-as, re-opened panels). */
-  async migrate(fromKey: string, to: vscode.Uri): Promise<boolean> {
+  async migrate(
+    fromKey: string,
+    to: vscode.Uri,
+    patch: Partial<TabMark> = {},
+  ): Promise<boolean> {
     const mark = this.marks.get(fromKey);
     if (!mark || this.marks.has(to.toString())) return false;
     this.marks.delete(fromKey);
-    this.marks.set(to.toString(), { ...mark, migratedFrom: fromKey });
+    const next = { ...mark, ...patch, migratedFrom: fromKey };
+    if (!next.tabSlot) delete next.tabSlot;
+    this.marks.set(to.toString(), next);
     await this.persist([vscode.Uri.parse(fromKey), to]);
     return true;
   }

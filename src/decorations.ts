@@ -1,6 +1,13 @@
 import * as vscode from 'vscode';
 import { TabMark, TabState } from './state';
-import { contrastColor, sanitizeHex, escapeCssContent, firstGraphemes, globMatch } from './pure';
+import {
+  contrastColor,
+  sanitizeHex,
+  escapeCssContent,
+  firstGraphemes,
+  globMatch,
+  matchSessionMarks,
+} from './pure';
 
 export type TabStyle = 'tinted' | 'full' | 'border';
 
@@ -37,7 +44,6 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
 
   /** Recent non-file tab URIs queried by the workbench (e.g. `webview-panel:`, `vscode-cascade-editor:`). */
   private readonly seenNonFileUris = new Map<string, { uri: vscode.Uri; ts: number }>();
-  private lastNonFileUri?: vscode.Uri;
   private readonly pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   private registration: vscode.Disposable;
@@ -58,7 +64,15 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
     }, 2500);
 
     this.disposables.push(
-      this.tabs.onDidChange((uris) => this.emitter.fire(uris)),
+      this.tabs.onDidChange((uris) => {
+        this.emitter.fire(uris);
+        if (
+          !uris ||
+          (Array.isArray(uris) ? uris : [uris]).some((uri) => KNOWN_TAB_SCHEMES.has(uri.scheme))
+        ) {
+          this.scheduleReconcile();
+        }
+      }),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (
           e.affectsConfiguration('alivetabs.tabStyle') ||
@@ -146,35 +160,37 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
   }
 
   /**
-   * Resolve the URI and display label of the currently active editor tab,
-   * including non-file tabs such as Claude Code (`TabInputWebview`) and
-   * Devin/Cascade agent sessions (`vscode-cascade-editor`).
+   * Resolve the active tab. Non-file resource URIs are paired with TabInputs
+   * by view type and tab-strip order.
    */
-  resolveActiveTab(): { uri: vscode.Uri; label?: string; viewType?: string } | undefined {
+  resolveActiveTab(): {
+    uri: vscode.Uri;
+    label?: string;
+    viewType?: string;
+    tabSlot?: string;
+  } | undefined {
     const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
     if (activeTab) {
       const input = activeTab.input as Record<string, unknown> | undefined;
       if (input) {
         if (input.uri instanceof vscode.Uri) {
-          return { uri: input.uri, label: activeTab.label };
+          return {
+            uri: input.uri,
+            label: input.uri.scheme === 'file' ? undefined : activeTab.label,
+          };
         }
         if (input.modified instanceof vscode.Uri) {
-          return { uri: input.modified, label: activeTab.label };
+          return {
+            uri: input.modified,
+            label: input.modified.scheme === 'file' ? undefined : activeTab.label,
+          };
         }
-        if (typeof input.viewType === 'string') {
-          const vt = input.viewType.replace(/^mainThreadWebview-/, '');
-          const uri = this.mostRecentSeen(
-            (u) => u.scheme === 'webview-panel' && u.path.includes(vt),
-          );
-          if (uri) return { uri, label: activeTab.label, viewType: vt };
-        }
-      } else {
-        // Custom workbench EditorInputs (e.g. CascadeEditorInput `vscode-cascade-editor`)
-        // have `activeTab.input === undefined` in the extension host.
-        const uri =
-          this.mostRecentSeen((u) => u.scheme === 'vscode-cascade-editor') ?? this.lastNonFileUri;
-        if (uri) return { uri, label: activeTab.label };
       }
+
+      const resolved = this.resolveUriForTab(activeTab);
+      if (resolved) return { ...resolved, label: resolved.label ?? activeTab.label };
+      // Never apply a mark to the last-queried sibling session as a fallback.
+      return undefined;
     }
 
     const doc = vscode.window.activeTextEditor?.document;
@@ -182,17 +198,122 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
     return undefined;
   }
 
-  /** Most recently decoration-queried URI matching `pred` (recency ≈ active tab). */
-  private mostRecentSeen(pred: (u: vscode.Uri) => boolean): vscode.Uri | undefined {
-    let best: vscode.Uri | undefined;
-    let ts = -1;
-    for (const { uri, ts: t } of this.seenNonFileUris.values()) {
-      if (t > ts && pred(uri)) {
-        ts = t;
-        best = uri;
+  /** Resolve a live tab's metadata from a decoration URI. */
+  resolveTab(uri: vscode.Uri): { label?: string; viewType?: string; tabSlot?: string } | undefined {
+    if (!KNOWN_TAB_SCHEMES.has(uri.scheme)) return undefined;
+    const viewType = uri.scheme === 'webview-panel' ? this.viewTypeForUri(uri) : undefined;
+    if (uri.scheme === 'webview-panel' && !viewType) return undefined;
+    const tabs = this.openTabsFor(uri.scheme, viewType);
+    const uris = this.seenUrisFor(uri.scheme, viewType);
+    if (tabs.length !== uris.length) return undefined;
+    const index = uris.findIndex((seen) => seen.toString() === uri.toString());
+    if (index < 0) return undefined;
+    return this.metadataForTab(tabs[index], uri.scheme, viewType);
+  }
+
+  private resolveUriForTab(
+    tab: vscode.Tab,
+  ): { uri: vscode.Uri; label?: string; viewType?: string; tabSlot?: string } | undefined {
+    const input = tab.input as Record<string, unknown> | undefined;
+    let scheme: string;
+    let viewType: string | undefined;
+    if (typeof input?.viewType === 'string') {
+      scheme = 'webview-panel';
+      viewType = normalizeViewType(input.viewType);
+    } else if (input === undefined) {
+      scheme = 'vscode-cascade-editor';
+    } else {
+      return undefined;
+    }
+
+    const tabs = this.openTabsFor(scheme, viewType);
+    const uris = this.seenUrisFor(scheme, viewType);
+    if (tabs.length !== uris.length) return undefined;
+    const index = tabs.indexOf(tab);
+    if (index < 0) return undefined;
+    return { uri: uris[index], ...this.metadataForTab(tab, scheme, viewType) };
+  }
+
+  private openTabsFor(scheme: string, viewType?: string): vscode.Tab[] {
+    const out: vscode.Tab[] = [];
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        const input = tab.input as Record<string, unknown> | undefined;
+        if (
+          scheme === 'webview-panel' &&
+          viewType &&
+          typeof input?.viewType === 'string' &&
+          normalizeViewType(input.viewType) === viewType
+        ) {
+          out.push(tab);
+        } else if (scheme === 'vscode-cascade-editor' && input === undefined) {
+          out.push(tab);
+        }
       }
     }
-    return best;
+    return out;
+  }
+
+  private seenUrisFor(scheme: string, viewType?: string): vscode.Uri[] {
+    return [...this.seenNonFileUris.values()]
+      .map(({ uri }) => uri)
+      .filter(
+        (uri) =>
+          uri.scheme === scheme &&
+          (scheme !== 'webview-panel' || (!!viewType && uri.path.includes(viewType))),
+      );
+  }
+
+  private viewTypeForUri(uri: vscode.Uri): string | undefined {
+    const viewTypes = new Set<string>();
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        const input = tab.input as Record<string, unknown> | undefined;
+        if (
+          typeof input?.viewType === 'string' &&
+          uri.path.includes(normalizeViewType(input.viewType))
+        ) {
+          viewTypes.add(normalizeViewType(input.viewType));
+        }
+      }
+    }
+    return viewTypes.size === 1 ? [...viewTypes][0] : undefined;
+  }
+
+  private metadataForTab(
+    tab: vscode.Tab,
+    scheme: string,
+    viewType?: string,
+  ): { label?: string; viewType?: string; tabSlot?: string } {
+    const tabSlot = this.tabSlotFor(tab, scheme, viewType);
+    return {
+      label: tab.label,
+      ...(scheme === 'webview-panel' && viewType ? { viewType } : {}),
+      ...(tabSlot ? { tabSlot } : {}),
+    };
+  }
+
+  private tabSlotFor(tab: vscode.Tab, scheme: string, viewType?: string): string | undefined {
+    for (const group of vscode.window.tabGroups.all) {
+      if (!group.tabs.includes(tab)) continue;
+      const peers = group.tabs.filter((candidate) => {
+        const input = candidate.input as Record<string, unknown> | undefined;
+        if (candidate.label !== tab.label) return false;
+        if (scheme === 'webview-panel') {
+          return (
+            !!viewType &&
+            typeof input?.viewType === 'string' &&
+            normalizeViewType(input.viewType) === viewType
+          );
+        }
+        return scheme === 'vscode-cascade-editor' && input === undefined;
+      });
+      const index = peers.indexOf(tab);
+      return index < 0
+        ? undefined
+        : JSON.stringify([scheme, viewType ?? '', group.viewColumn, index]);
+    }
+    return undefined;
   }
 
   private rememberSeen(uri: vscode.Uri): void {
@@ -202,7 +323,6 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
     const prev = this.seenNonFileUris.get(key);
     if (prev) prev.ts = Date.now();
     else this.seenNonFileUris.set(key, { uri, ts: Date.now() });
-    if (KNOWN_TAB_SCHEMES.has(uri.scheme)) this.lastNonFileUri = uri;
     while (this.seenNonFileUris.size > MAX_SEEN_URIS) {
       const oldest = this.seenNonFileUris.keys().next().value;
       if (oldest === undefined) break;
@@ -224,19 +344,25 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
       const old = tryParseUri(key);
       if (!old || old.scheme !== uri.scheme) continue;
       if (uri.scheme === 'webview-panel') {
-        const vt = m.viewType ?? guessWebviewViewType(old);
+        const vt = m.viewType ? normalizeViewType(m.viewType) : guessWebviewViewType(old);
         if (!vt || !uri.path.includes(vt)) continue;
       }
       candidates.push([key, m]);
     }
-    if (candidates.length !== 1) {
-      // Several same-viewType orphans — the positional reconcile pass may
-      // still be able to pair URIs with tabs by label.
+    const viewType = uri.scheme === 'webview-panel' ? this.viewTypeForUri(uri) : undefined;
+    const liveTabs = this.openTabsFor(uri.scheme, viewType);
+    const liveUris = this.seenUrisFor(uri.scheme, viewType);
+    if (
+      candidates.length !== 1 ||
+      liveTabs.length !== 1 ||
+      liveUris.length !== 1
+    ) {
+      // Defer ambiguous sessions until all current tab URIs have been queried.
       this.scheduleReconcile();
       return undefined;
     }
     const [oldKey, mark] = candidates[0];
-    void this.tabs.migrate(oldKey, uri);
+    void this.tabs.migrate(oldKey, uri, this.resolveTab(uri) ?? {});
     return mark;
   }
 
@@ -256,13 +382,9 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
    * `provideFileDecoration` learns a tab's URI but not its label; `tabGroups`
    * exposes each tab's label/viewType but not its URI. Decoration queries
    * arrive in tab-strip order, so within one viewType bucket the i-th queried
-   * URI belongs to the i-th open tab of that viewType — pairing there, then
-   * migrating the mark whose stored `label` exactly equals the tab's label.
-   *
-   * Guarded to avoid wrong attribution: a bucket is only paired when the
-   * count of open tabs equals the count of queried URIs for that viewType and
-   * every open tab label is unique. Anything unresolved stays orphaned and
-   * remains visible in the overview for manual re-marking.
+   * URI belongs to the i-th open tab of that viewType. Saved slots survive
+   * future URI changes; legacy marks fall back to labels and only use a full
+   * positional match when every remaining mark has a corresponding open tab.
    */
   private reconcileNonFileMarks(): void {
     const stale = this.tabs
@@ -274,74 +396,88 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
           KNOWN_TAB_SCHEMES.has(e.uri.scheme) &&
           !this.seenNonFileUris.has(e.key),
       );
-    if (!stale.length) return;
 
     // Open non-file tabs in strip order, bucketed by viewType.
-    const openWeb = new Map<string, string[]>();
-    const openCascade: string[] = [];
+    const openWeb = new Map<string, vscode.Tab[]>();
+    const openCascade: vscode.Tab[] = [];
     for (const group of vscode.window.tabGroups.all) {
       for (const tab of group.tabs) {
         const input = tab.input as Record<string, unknown> | undefined;
         if (typeof input?.viewType === 'string') {
-          const vt = input.viewType.replace(/^mainThreadWebview-/, '');
-          const labels = openWeb.get(vt);
-          if (labels) labels.push(tab.label);
-          else openWeb.set(vt, [tab.label]);
+          const viewType = normalizeViewType(input.viewType);
+          const tabs = openWeb.get(viewType);
+          if (tabs) tabs.push(tab);
+          else openWeb.set(viewType, [tab]);
         } else if (input === undefined) {
-          openCascade.push(tab.label);
+          openCascade.push(tab);
         }
       }
     }
 
-    const seenOf = (scheme: string) =>
-      [...this.seenNonFileUris.values()]
-        .map((x) => x.uri)
-        .filter((u) => u.scheme === scheme);
-
     const usedKeys = new Set<string>();
-    const pairBucket = (
-      labels: string[],
+    const reconcileBucket = (
+      scheme: string,
+      viewType: string | undefined,
+      tabs: vscode.Tab[],
       uris: vscode.Uri[],
-      findKey: (label: string) => string | undefined,
     ): void => {
-      if (!uris.length || uris.length !== labels.length) return;
-      if (new Set(labels).size !== labels.length) return;
-      for (let i = 0; i < uris.length; i++) {
-        const key = findKey(labels[i]);
-        if (key && !usedKeys.has(key)) {
-          usedKeys.add(key);
-          void this.tabs.migrate(key, uris[i]);
-        }
+      if (!uris.length || uris.length !== tabs.length) return;
+      const currentTabs = tabs.map((tab, i) => {
+        const metadata = this.metadataForTab(tab, scheme, viewType);
+        return {
+          tab,
+          uri: uris[i],
+          label: tab.label,
+          tabSlot: metadata.tabSlot,
+          metadata,
+        };
+      });
+
+      const candidates = stale.filter((entry) => {
+        if (usedKeys.has(entry.key) || entry.uri.scheme !== scheme) return false;
+        if (scheme !== 'webview-panel') return true;
+        if (!viewType) return false;
+        return entry.mark.viewType
+          ? normalizeViewType(entry.mark.viewType) === viewType
+          : entry.uri.path.includes(viewType);
+      });
+      const unmarkedTabs = currentTabs.filter((current) => !this.tabs.get(current.uri));
+      const matches = matchSessionMarks(
+        candidates.map((entry) => ({
+          key: entry.key,
+          label: entry.mark.label,
+          tabSlot: entry.mark.tabSlot,
+        })),
+        unmarkedTabs.map((current) => ({
+          uri: current.uri.toString(),
+          label: current.label,
+          tabSlot: current.tabSlot,
+        })),
+        scheme === 'webview-panel',
+      );
+
+      for (const match of matches) {
+        if (usedKeys.has(match.key)) continue;
+        const current = currentTabs.find((entry) => entry.uri.toString() === match.uri);
+        if (!current) continue;
+        usedKeys.add(match.key);
+        void this.tabs.migrate(match.key, current.uri, current.metadata);
       }
     };
 
-    const staleFor = (scheme: string, vt?: string) =>
-      stale.filter(
-        (e) =>
-          !usedKeys.has(e.key) &&
-          e.uri.scheme === scheme &&
-          (vt === undefined ||
-            e.mark.viewType === vt ||
-            (!e.mark.viewType && e.uri.path.includes(vt))),
+    reconcileBucket(
+      'vscode-cascade-editor',
+      undefined,
+      openCascade,
+      this.seenUrisFor('vscode-cascade-editor'),
+    );
+    for (const [viewType, tabs] of openWeb) {
+      reconcileBucket(
+        'webview-panel',
+        viewType,
+        tabs,
+        this.seenUrisFor('webview-panel', viewType),
       );
-
-    // Cascade bucket — only when stale cascade marks exist (the
-    // `input === undefined` bucket is noisy: terminals/settings land there).
-    if (staleFor('vscode-cascade-editor').length) {
-      const uris = seenOf('vscode-cascade-editor');
-      pairBucket(openCascade, uris, (label) => {
-        const c = staleFor('vscode-cascade-editor').filter((e) => e.mark.label === label);
-        return c.length === 1 ? c[0].key : undefined;
-      });
-    }
-
-    const seenWeb = seenOf('webview-panel');
-    for (const [vt, labels] of openWeb) {
-      const uris = seenWeb.filter((u) => u.path.includes(vt));
-      pairBucket(labels, uris, (label) => {
-        const c = staleFor('webview-panel', vt).filter((e) => e.mark.label === label);
-        return c.length === 1 ? c[0].key : undefined;
-      });
     }
   }
 
@@ -500,6 +636,10 @@ function tryParseUri(key: string): vscode.Uri | undefined {
   } catch {
     return undefined;
   }
+}
+
+function normalizeViewType(viewType: string): string {
+  return viewType.replace(/^mainThreadWebview-/, '');
 }
 
 /** Best-effort viewType recovery from a `webview-panel:` URI path (`/<viewType>-<panelId>`). */

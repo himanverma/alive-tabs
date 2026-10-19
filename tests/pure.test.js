@@ -8,6 +8,7 @@ const {
   firstGraphemes,
   globMatch,
   globToRegExp,
+  matchSessionMarks,
 } = require('../out/pure.js');
 
 test('sanitizeHex normalizes hex colors', () => {
@@ -82,4 +83,114 @@ test('globMatch: literals are escaped', () => {
 test('globToRegExp anchors the whole string', () => {
   assert.ok(!globToRegExp('*.ts').test('x.ts.bak'));
   assert.ok(globToRegExp('*.ts').test('x.ts'));
+});
+
+test('session marks prefer their saved tab slot over labels', () => {
+  const matches = matchSessionMarks(
+    [
+      { key: 'old-a', label: 'Claude Code', tabSlot: 'column-1:0' },
+      { key: 'old-b', label: 'Claude Code', tabSlot: 'column-1:1' },
+    ],
+    [
+      { uri: 'new-b', label: 'Claude Code', tabSlot: 'column-1:1' },
+      { uri: 'new-a', label: 'Claude Code', tabSlot: 'column-1:0' },
+    ],
+  );
+  assert.deepStrictEqual(matches, [
+    { key: 'old-a', uri: 'new-a', tabSlot: 'column-1:0' },
+    { key: 'old-b', uri: 'new-b', tabSlot: 'column-1:1' },
+  ]);
+});
+
+test('legacy session marks with duplicate labels reattach in tab order', () => {
+  const matches = matchSessionMarks(
+    [
+      { key: 'old-a', label: 'Claude Code' },
+      { key: 'old-b', label: 'Claude Code' },
+    ],
+    [
+      { uri: 'new-a', label: 'Claude Code', tabSlot: 'slot-0' },
+      { uri: 'new-b', label: 'Claude Code', tabSlot: 'slot-1' },
+    ],
+  );
+  assert.deepStrictEqual(matches, [
+    { key: 'old-a', uri: 'new-a', tabSlot: 'slot-0' },
+    { key: 'old-b', uri: 'new-b', tabSlot: 'slot-1' },
+  ]);
+});
+
+test('session marks do not guess when only part of a duplicate-label group is marked', () => {
+  const matches = matchSessionMarks(
+    [{ key: 'old-a', label: 'Claude Code' }],
+    [
+      { uri: 'new-a', label: 'Claude Code', tabSlot: 'slot-0' },
+      { uri: 'new-b', label: 'Claude Code', tabSlot: 'slot-1' },
+    ],
+  );
+  assert.deepStrictEqual(matches, []);
+
+  const mixedLabels = matchSessionMarks(
+    [
+      { key: 'old-a', label: 'Claude Code' },
+      { key: 'old-b', label: 'Other old title' },
+    ],
+    [
+      { uri: 'new-a', label: 'Claude Code', tabSlot: 'slot-0' },
+      { uri: 'new-b', label: 'Claude Code', tabSlot: 'slot-1' },
+    ],
+  );
+  assert.deepStrictEqual(mixedLabels, []);
+});
+
+test('legacy session marks with stale labels use order only for a complete bucket', () => {
+  const matches = matchSessionMarks(
+    [
+      { key: 'old-a', label: 'Old title A' },
+      { key: 'old-b', label: 'Old title B' },
+    ],
+    [
+      { uri: 'new-a', label: 'Restored title A', tabSlot: 'slot-0' },
+      { uri: 'new-b', label: 'Restored title B', tabSlot: 'slot-1' },
+    ],
+  );
+  assert.deepStrictEqual(matches, [
+    { key: 'old-a', uri: 'new-a', tabSlot: 'slot-0' },
+    { key: 'old-b', uri: 'new-b', tabSlot: 'slot-1' },
+  ]);
+
+  const incomplete = matchSessionMarks(
+    [{ key: 'old-a', label: 'Old title' }],
+    [
+      { uri: 'new-a', label: 'Restored title A', tabSlot: 'slot-0' },
+      { uri: 'new-b', label: 'Restored title B', tabSlot: 'slot-1' },
+    ],
+  );
+  assert.deepStrictEqual(incomplete, []);
+
+  const repeatedOldTitle = matchSessionMarks(
+    [
+      { key: 'old-a', label: 'Old active title' },
+      { key: 'old-b', label: 'Old active title' },
+      { key: 'old-c', label: 'Old active title' },
+    ],
+    [
+      { uri: 'new-a', label: 'Old active title', tabSlot: 'slot-0' },
+      { uri: 'new-b', label: 'Restored title B', tabSlot: 'slot-1' },
+      { uri: 'new-c', label: 'Restored title C', tabSlot: 'slot-2' },
+    ],
+  );
+  assert.deepStrictEqual(repeatedOldTitle, [
+    { key: 'old-a', uri: 'new-a', tabSlot: 'slot-0' },
+    { key: 'old-b', uri: 'new-b', tabSlot: 'slot-1' },
+    { key: 'old-c', uri: 'new-c', tabSlot: 'slot-2' },
+  ]);
+
+  assert.deepStrictEqual(
+    matchSessionMarks(
+      [{ key: 'old-cascade', label: 'Old title' }],
+      [{ uri: 'new-cascade', label: 'Restored title', tabSlot: 'slot-0' }],
+      false,
+    ),
+    [],
+  );
 });

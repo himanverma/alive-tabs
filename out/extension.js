@@ -113,18 +113,6 @@ function displayNameFor(uri, storedLabel) {
     if (uri.scheme === 'file' || uri.scheme === 'untitled') {
         return path.posix.basename(uri.path) || uri.path;
     }
-    const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
-    if (activeTab?.label) {
-        const input = activeTab.input;
-        if (uri.scheme === 'webview-panel' && typeof input?.viewType === 'string') {
-            const vt = input.viewType.replace(/^mainThreadWebview-/, '');
-            if (uri.path.includes(vt))
-                return activeTab.label;
-        }
-        else if (uri.scheme === 'vscode-cascade-editor' && !input) {
-            return activeTab.label;
-        }
-    }
     if (uri.path.includes('claudeVSCodePanel'))
         return 'Claude Code';
     if (uri.scheme === 'vscode-cascade-editor')
@@ -161,9 +149,17 @@ function findUriInArgs(args, depth = 0) {
 function resolveTarget(args, decorations, tabs) {
     const fromArgs = findUriInArgs(args);
     if (fromArgs) {
-        const existing = tabs.get(fromArgs)?.label;
-        const label = fromArgs.scheme === 'file' ? undefined : displayNameFor(fromArgs, existing);
-        return { uri: fromArgs, label };
+        const existing = tabs.get(fromArgs);
+        const live = decorations.resolveTab(fromArgs);
+        const label = fromArgs.scheme === 'file'
+            ? undefined
+            : live?.label ?? existing?.label ?? displayNameFor(fromArgs);
+        return {
+            uri: fromArgs,
+            label,
+            viewType: live?.viewType ?? existing?.viewType,
+            tabSlot: live?.tabSlot ?? existing?.tabSlot,
+        };
     }
     return decorations.resolveActiveTab();
 }
@@ -182,7 +178,7 @@ async function activate(context) {
         const target = resolveTarget(args, decorations, tabs);
         if (!target)
             return vscode.window.showWarningMessage('Alive TABs: no tab selected.');
-        const { uri, label, viewType } = target;
+        const { uri, label, viewType, tabSlot } = target;
         const cur = tabs.get(uri);
         const titleName = displayNameFor(uri, label ?? cur?.label);
         const items = [...PRESETS, ...userPresets()].map((p) => {
@@ -213,6 +209,7 @@ async function activate(context) {
                 color: pick.color,
                 ...(label ? { label } : {}),
                 ...(viewType ? { viewType } : {}),
+                ...(tabSlot ? { tabSlot } : {}),
             });
         }
     });
@@ -220,7 +217,7 @@ async function activate(context) {
         const target = resolveTarget(args, decorations, tabs);
         if (!target)
             return vscode.window.showWarningMessage('Alive TABs: no tab selected.');
-        const { uri, label, viewType } = target;
+        const { uri, label, viewType, tabSlot } = target;
         const cur = tabs.get(uri);
         const titleName = displayNameFor(uri, label ?? cur?.label);
         const items = FLAGS.map((f) => ({
@@ -253,13 +250,18 @@ async function activate(context) {
                 return;
         }
         if (emoji)
-            await tabs.set(uri, { flag: emoji, ...(label ? { label } : {}), ...(viewType ? { viewType } : {}) });
+            await tabs.set(uri, {
+                flag: emoji,
+                ...(label ? { label } : {}),
+                ...(viewType ? { viewType } : {}),
+                ...(tabSlot ? { tabSlot } : {}),
+            });
     });
     reg('alivetabs.setColor', async (...args) => {
         const target = resolveTarget(args, decorations, tabs);
         if (!target)
             return vscode.window.showWarningMessage('Alive TABs: no tab selected.');
-        const { uri, label, viewType } = target;
+        const { uri, label, viewType, tabSlot } = target;
         const cur = tabs.get(uri);
         const titleName = displayNameFor(uri, label ?? cur?.label);
         const items = COLORS.map((c) => {
@@ -298,7 +300,12 @@ async function activate(context) {
                     : `#${clean.toLowerCase()}`;
         }
         if (color)
-            await tabs.set(uri, { color, ...(label ? { label } : {}), ...(viewType ? { viewType } : {}) });
+            await tabs.set(uri, {
+                color,
+                ...(label ? { label } : {}),
+                ...(viewType ? { viewType } : {}),
+                ...(tabSlot ? { tabSlot } : {}),
+            });
     });
     reg('alivetabs.switchTabStyle', async () => {
         const cfg = vscode.workspace.getConfiguration('alivetabs');

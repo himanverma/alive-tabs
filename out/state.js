@@ -92,12 +92,15 @@ class TabState {
         await this.persist(affected.length ? affected : undefined);
     }
     /** Move a mark from a stale key to a live URI (save-as, re-opened panels). */
-    async migrate(fromKey, to) {
+    async migrate(fromKey, to, patch = {}) {
         const mark = this.marks.get(fromKey);
         if (!mark || this.marks.has(to.toString()))
             return false;
         this.marks.delete(fromKey);
-        this.marks.set(to.toString(), { ...mark, migratedFrom: fromKey });
+        const next = { ...mark, ...patch, migratedFrom: fromKey };
+        if (!next.tabSlot)
+            delete next.tabSlot;
+        this.marks.set(to.toString(), next);
         await this.persist([vscode.Uri.parse(fromKey), to]);
         return true;
     }

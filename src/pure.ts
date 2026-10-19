@@ -113,3 +113,104 @@ export function globMatch(pattern: string, path: string): boolean {
   if (!pattern) return false;
   return globToRegExp(pattern).test(path.replace(/\\/g, '/'));
 }
+
+export interface SessionMarkCandidate {
+  key: string;
+  label?: string;
+  tabSlot?: string;
+}
+
+export interface SessionTabCandidate {
+  uri: string;
+  label: string;
+  tabSlot?: string;
+}
+
+export interface SessionMarkMatch {
+  key: string;
+  uri: string;
+  tabSlot?: string;
+}
+
+/**
+ * Pair persisted session marks with recreated tabs. A slot is the preferred
+ * identity; legacy marks fall back to labels, then to tab order only when the
+ * remaining marks and tabs form a complete one-to-one bucket.
+ */
+export function matchSessionMarks(
+  marks: readonly SessionMarkCandidate[],
+  tabs: readonly SessionTabCandidate[],
+  allowCompleteOrderFallback = true,
+): SessionMarkMatch[] {
+  const usedMarks = new Set<number>();
+  const usedTabs = new Set<number>();
+  const matches: SessionMarkMatch[] = [];
+
+  const pair = (markIndex: number, tabIndex: number): void => {
+    usedMarks.add(markIndex);
+    usedTabs.add(tabIndex);
+    matches.push({
+      key: marks[markIndex].key,
+      uri: tabs[tabIndex].uri,
+      tabSlot: tabs[tabIndex].tabSlot,
+    });
+  };
+
+  const markSlots = new Map<string, number[]>();
+  const tabSlots = new Map<string, number[]>();
+  marks.forEach((mark, i) => {
+    if (!mark.tabSlot) return;
+    const indexes = markSlots.get(mark.tabSlot) ?? [];
+    indexes.push(i);
+    markSlots.set(mark.tabSlot, indexes);
+  });
+  tabs.forEach((tab, i) => {
+    if (!tab.tabSlot) return;
+    const indexes = tabSlots.get(tab.tabSlot) ?? [];
+    indexes.push(i);
+    tabSlots.set(tab.tabSlot, indexes);
+  });
+  for (const [slot, markIndexes] of markSlots) {
+    const tabIndexes = tabSlots.get(slot);
+    if (markIndexes.length === 1 && tabIndexes?.length === 1) {
+      pair(markIndexes[0], tabIndexes[0]);
+    }
+  }
+
+  const labels = new Set(
+    tabs.map((tab, i) => (usedTabs.has(i) ? undefined : tab.label)).filter((v): v is string => !!v),
+  );
+  for (const label of labels) {
+    const markIndexes = marks
+      .map((mark, i) => (!usedMarks.has(i) && mark.label === label ? i : -1))
+      .filter((i) => i >= 0);
+    const tabIndexes = tabs
+      .map((tab, i) => (!usedTabs.has(i) && tab.label === label ? i : -1))
+      .filter((i) => i >= 0);
+    if (markIndexes.length !== tabIndexes.length) continue;
+    for (let i = 0; i < markIndexes.length; i++) pair(markIndexes[i], tabIndexes[i]);
+  }
+
+  const remainingMarks = marks.map((_, i) => i).filter((i) => !usedMarks.has(i));
+  const remainingTabs = tabs.map((_, i) => i).filter((i) => !usedTabs.has(i));
+  const remainingMarkLabels = new Set(
+    remainingMarks.map((i) => marks[i].label).filter((v): v is string => !!v),
+  );
+  const remainingTabLabels = new Set(remainingTabs.map((i) => tabs[i].label));
+  const labelsOverlap = [...remainingMarkLabels].some((label) => remainingTabLabels.has(label));
+  const sharedLabel = remainingMarkLabels.values().next().value;
+  const allMarksShareLabel =
+    remainingMarkLabels.size === 1 && remainingMarks.every((i) => marks[i].label === sharedLabel);
+  if (
+    allowCompleteOrderFallback &&
+    remainingMarks.length > 0 &&
+    remainingMarks.length === remainingTabs.length &&
+    (!labelsOverlap || allMarksShareLabel)
+  ) {
+    for (let i = 0; i < remainingMarks.length; i++) {
+      pair(remainingMarks[i], remainingTabs[i]);
+    }
+  }
+
+  return matches;
+}

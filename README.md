@@ -87,17 +87,17 @@ Search for **`Alive TABs`** (or **`WebieAPP.alivetabs`**) in the Extensions side
 
 ### From VSIX ([GitHub Releases](https://github.com/himanverma/alive-tabs/releases))
 
-1. Download the latest `alivetabs-0.3.2.vsix` from [Releases](https://github.com/himanverma/alive-tabs/releases) (or the repository root).
-2. In **Devin Desktop / Windsurf / VS Code / Cursor**: open **Extensions** (`Ctrl+Shift+X`) → **`⋯` menu** → **Install from VSIX…** and select `alivetabs-0.3.2.vsix`.
+1. Download the latest `alivetabs-0.3.4.vsix` from [Releases](https://github.com/himanverma/alive-tabs/releases) (or the repository root).
+2. In **Devin Desktop / Windsurf / VS Code / Cursor**: open **Extensions** (`Ctrl+Shift+X`) → **`⋯` menu** → **Install from VSIX…** and select `alivetabs-0.3.4.vsix`.
 
 Or install from the terminal:
 
 ```bash
 # Devin Desktop
-/usr/share/devin-desktop/bin/devin-desktop --install-extension alivetabs-0.3.2.vsix --extensions-dir ~/.devin/extensions --force
+/usr/share/devin-desktop/bin/devin-desktop --install-extension alivetabs-0.3.4.vsix --extensions-dir ~/.devin/extensions --force
 
 # VS Code / Windsurf / Cursor
-code --install-extension alivetabs-0.3.2.vsix
+code --install-extension alivetabs-0.3.4.vsix
 ```
 
 ## Publishing

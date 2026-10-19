@@ -84,16 +84,6 @@ function displayNameFor(uri: vscode.Uri, storedLabel?: string): string {
   if (uri.scheme === 'file' || uri.scheme === 'untitled') {
     return path.posix.basename(uri.path) || uri.path;
   }
-  const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
-  if (activeTab?.label) {
-    const input = activeTab.input as Record<string, unknown> | undefined;
-    if (uri.scheme === 'webview-panel' && typeof input?.viewType === 'string') {
-      const vt = input.viewType.replace(/^mainThreadWebview-/, '');
-      if (uri.path.includes(vt)) return activeTab.label;
-    } else if (uri.scheme === 'vscode-cascade-editor' && !input) {
-      return activeTab.label;
-    }
-  }
   if (uri.path.includes('claudeVSCodePanel')) return 'Claude Code';
   if (uri.scheme === 'vscode-cascade-editor') return 'Agent Session';
   return path.posix.basename(uri.path) || uri.toString();
@@ -125,13 +115,21 @@ function resolveTarget(
   args: unknown[],
   decorations: TabDecorationProvider,
   tabs: TabState,
-): { uri: vscode.Uri; label?: string; viewType?: string } | undefined {
+): { uri: vscode.Uri; label?: string; viewType?: string; tabSlot?: string } | undefined {
   const fromArgs = findUriInArgs(args);
   if (fromArgs) {
-    const existing = tabs.get(fromArgs)?.label;
+    const existing = tabs.get(fromArgs);
+    const live = decorations.resolveTab(fromArgs);
     const label =
-      fromArgs.scheme === 'file' ? undefined : displayNameFor(fromArgs, existing);
-    return { uri: fromArgs, label };
+      fromArgs.scheme === 'file'
+        ? undefined
+        : live?.label ?? existing?.label ?? displayNameFor(fromArgs);
+    return {
+      uri: fromArgs,
+      label,
+      viewType: live?.viewType ?? existing?.viewType,
+      tabSlot: live?.tabSlot ?? existing?.tabSlot,
+    };
   }
   return decorations.resolveActiveTab();
 }
@@ -155,7 +153,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   reg('alivetabs.setPreset', async (...args: unknown[]) => {
     const target = resolveTarget(args, decorations, tabs);
     if (!target) return vscode.window.showWarningMessage('Alive TABs: no tab selected.');
-    const { uri, label, viewType } = target;
+    const { uri, label, viewType, tabSlot } = target;
     const cur = tabs.get(uri);
     const titleName = displayNameFor(uri, label ?? cur?.label);
     const items: (vscode.QuickPickItem & { action?: string; flag?: string; color?: string })[] =
@@ -189,6 +187,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         color: pick.color,
         ...(label ? { label } : {}),
         ...(viewType ? { viewType } : {}),
+        ...(tabSlot ? { tabSlot } : {}),
       });
     }
   });
@@ -196,7 +195,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   reg('alivetabs.setFlag', async (...args: unknown[]) => {
     const target = resolveTarget(args, decorations, tabs);
     if (!target) return vscode.window.showWarningMessage('Alive TABs: no tab selected.');
-    const { uri, label, viewType } = target;
+    const { uri, label, viewType, tabSlot } = target;
     const cur = tabs.get(uri);
     const titleName = displayNameFor(uri, label ?? cur?.label);
     const items: (vscode.QuickPickItem & { emoji?: string; action?: string })[] = FLAGS.map(
@@ -235,13 +234,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       )?.trim();
       if (!emoji) return;
     }
-    if (emoji) await tabs.set(uri, { flag: emoji, ...(label ? { label } : {}), ...(viewType ? { viewType } : {}) });
+    if (emoji)
+      await tabs.set(uri, {
+        flag: emoji,
+        ...(label ? { label } : {}),
+        ...(viewType ? { viewType } : {}),
+        ...(tabSlot ? { tabSlot } : {}),
+      });
   });
 
   reg('alivetabs.setColor', async (...args: unknown[]) => {
     const target = resolveTarget(args, decorations, tabs);
     if (!target) return vscode.window.showWarningMessage('Alive TABs: no tab selected.');
-    const { uri, label, viewType } = target;
+    const { uri, label, viewType, tabSlot } = target;
     const cur = tabs.get(uri);
     const titleName = displayNameFor(uri, label ?? cur?.label);
     const items: (vscode.QuickPickItem & { color?: string; action?: string })[] = COLORS.map(
@@ -286,7 +291,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           ? `#${clean[0]}${clean[0]}${clean[1]}${clean[1]}${clean[2]}${clean[2]}`.toLowerCase()
           : `#${clean.toLowerCase()}`;
     }
-    if (color) await tabs.set(uri, { color, ...(label ? { label } : {}), ...(viewType ? { viewType } : {}) });
+    if (color)
+      await tabs.set(uri, {
+        color,
+        ...(label ? { label } : {}),
+        ...(viewType ? { viewType } : {}),
+        ...(tabSlot ? { tabSlot } : {}),
+      });
   });
 
   reg('alivetabs.switchTabStyle', async () => {

@@ -6,6 +6,18 @@ All notable changes to this extension are documented here. The format follows
 
 ---
 
+## [0.3.4] — 2026-10-19
+
+Fixes session-tab marks that remained in the overview but stopped rendering on
+the editor tabs after a webview/session URI changed.
+
+- Persist a per-tab slot alongside the mark so recreated panels can recover
+  their flags and colors even when several tabs share the same label.
+- Reconcile legacy marks with duplicate or stale labels when the live tab/URI
+  bucket is complete; leave incomplete ambiguous buckets untouched.
+- Resolve context-menu labels and view types from the actual target tab instead
+  of borrowing metadata from the active sibling tab.
+
 ## [0.3.3] — 2026-10-15
 
 Docs release — no extension-code changes.
