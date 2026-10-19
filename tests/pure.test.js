@@ -119,7 +119,7 @@ test('legacy session marks with duplicate labels reattach in tab order', () => {
   ]);
 });
 
-test('session marks do not guess when only part of a duplicate-label group is marked', () => {
+test('session marks match available tabs for a label even if counts differ', () => {
   const matches = matchSessionMarks(
     [{ key: 'old-a', label: 'Claude Code' }],
     [
@@ -127,19 +127,25 @@ test('session marks do not guess when only part of a duplicate-label group is ma
       { uri: 'new-b', label: 'Claude Code', tabSlot: 'slot-1' },
     ],
   );
-  assert.deepStrictEqual(matches, []);
+  assert.deepStrictEqual(matches, [
+    { key: 'old-a', uri: 'new-a', tabSlot: 'slot-0' },
+  ]);
+});
 
-  const mixedLabels = matchSessionMarks(
+test('session marks select most recent marks when there are more marks than open tabs', () => {
+  const matches = matchSessionMarks(
     [
-      { key: 'old-a', label: 'Claude Code' },
-      { key: 'old-b', label: 'Other old title' },
+      { key: 'old-1', label: 'Claude Code', ts: 100 },
+      { key: 'old-2', label: 'Claude Code', ts: 300 },
+      { key: 'old-3', label: 'Claude Code', ts: 200 },
     ],
     [
       { uri: 'new-a', label: 'Claude Code', tabSlot: 'slot-0' },
-      { uri: 'new-b', label: 'Claude Code', tabSlot: 'slot-1' },
     ],
   );
-  assert.deepStrictEqual(mixedLabels, []);
+  assert.deepStrictEqual(matches, [
+    { key: 'old-2', uri: 'new-a', tabSlot: 'slot-0' },
+  ]);
 });
 
 test('legacy session marks with stale labels use order only for a complete bucket', () => {

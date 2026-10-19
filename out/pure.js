@@ -172,10 +172,16 @@ function matchSessionMarks(marks, tabs, allowCompleteOrderFallback = true) {
         const tabIndexes = tabs
             .map((tab, i) => (!usedTabs.has(i) && tab.label === label ? i : -1))
             .filter((i) => i >= 0);
-        if (markIndexes.length !== tabIndexes.length)
+        if (!markIndexes.length || !tabIndexes.length)
             continue;
-        for (let i = 0; i < markIndexes.length; i++)
-            pair(markIndexes[i], tabIndexes[i]);
+        // When there are more marks than tabs with this label, take the most recent marks (highest ts).
+        markIndexes.sort((a, b) => (marks[b].ts ?? 0) - (marks[a].ts ?? 0));
+        const count = Math.min(markIndexes.length, tabIndexes.length);
+        const chosenMarks = markIndexes.slice(0, count);
+        // Sort chosen marks back to their original index order to preserve relative strip order
+        chosenMarks.sort((a, b) => a - b);
+        for (let i = 0; i < count; i++)
+            pair(chosenMarks[i], tabIndexes[i]);
     }
     const remainingMarks = marks.map((_, i) => i).filter((i) => !usedMarks.has(i));
     const remainingTabs = tabs.map((_, i) => i).filter((i) => !usedTabs.has(i));

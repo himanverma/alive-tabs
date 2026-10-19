@@ -6,6 +6,20 @@ All notable changes to this extension are documented here. The format follows
 
 ---
 
+## [0.3.5] — 2026-10-19
+
+Fixes session tabs not retaining flags and colors after IDE restart when
+multiple sessions share duplicate labels or have accumulated stale marks.
+
+- Robust session mark matching: when more marks than open tabs exist for a
+  given label (e.g. from previous sessions), automatically select the most
+  recent marks and prune older obsolete duplicate marks.
+- Progressive reconciliation: retry reconciliation as webview panels
+  deserialize and report their URIs instead of aborting when queries arrive
+  incrementally.
+- Clean up dead duplicate session marks so ghost rows no longer linger in
+  the Overview panel.
+
 ## [0.3.4] — 2026-10-19
 
 Fixes session-tab marks that remained in the overview but stopped rendering on

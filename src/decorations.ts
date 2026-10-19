@@ -60,8 +60,14 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
       this.registration.dispose();
       this.registration = vscode.window.registerFileDecorationProvider(this);
       this.emitter.fire(undefined);
-      this.scheduleReconcile();
-    }, 2500);
+      this.scheduleReconcile(100);
+    }, 1500);
+
+    // Initial reconciliation passes to catch tabs as they deserialize
+    this.scheduleReconcile(200);
+    setTimeout(() => this.scheduleReconcile(100), 800);
+    setTimeout(() => this.scheduleReconcile(100), 2500);
+    setTimeout(() => this.scheduleReconcile(100), 5000);
 
     this.disposables.push(
       this.tabs.onDidChange((uris) => {
@@ -321,8 +327,14 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
     // Keep insertion position on re-query — positional pairing relies on
     // first-seen order matching the tab-strip order.
     const prev = this.seenNonFileUris.get(key);
-    if (prev) prev.ts = Date.now();
-    else this.seenNonFileUris.set(key, { uri, ts: Date.now() });
+    if (prev) {
+      prev.ts = Date.now();
+    } else {
+      this.seenNonFileUris.set(key, { uri, ts: Date.now() });
+      if (KNOWN_TAB_SCHEMES.has(uri.scheme)) {
+        this.scheduleReconcile(200);
+      }
+    }
     while (this.seenNonFileUris.size > MAX_SEEN_URIS) {
       const oldest = this.seenNonFileUris.keys().next().value;
       if (oldest === undefined) break;
@@ -368,12 +380,12 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
 
   private reconcileTimer?: ReturnType<typeof setTimeout>;
 
-  private scheduleReconcile(): void {
-    if (this.reconcileTimer) return;
+  private scheduleReconcile(delay = 350): void {
+    if (this.reconcileTimer) clearTimeout(this.reconcileTimer);
     this.reconcileTimer = setTimeout(() => {
       this.reconcileTimer = undefined;
       this.reconcileNonFileMarks();
-    }, 350);
+    }, delay);
   }
 
   /**
@@ -421,8 +433,12 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
       tabs: vscode.Tab[],
       uris: vscode.Uri[],
     ): void => {
-      if (!uris.length || uris.length !== tabs.length) return;
-      const currentTabs = tabs.map((tab, i) => {
+      if (!uris.length) return;
+      if (uris.length < tabs.length) {
+        this.scheduleReconcile(600);
+      }
+      const count = Math.min(tabs.length, uris.length);
+      const currentTabs = tabs.slice(0, count).map((tab, i) => {
         const metadata = this.metadataForTab(tab, scheme, viewType);
         return {
           tab,
@@ -447,6 +463,7 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
           key: entry.key,
           label: entry.mark.label,
           tabSlot: entry.mark.tabSlot,
+          ts: entry.mark.ts,
         })),
         unmarkedTabs.map((current) => ({
           uri: current.uri.toString(),
@@ -462,6 +479,20 @@ export class TabDecorationProvider implements vscode.FileDecorationProvider, vsc
         if (!current) continue;
         usedKeys.add(match.key);
         void this.tabs.migrate(match.key, current.uri, current.metadata);
+      }
+
+      // Clean up older duplicate stale marks for labels that were matched,
+      // so ghost rows from past sessions don't linger in the overview.
+      const matchedLabels = new Set(
+        matches
+          .map((m) => candidates.find((c) => c.key === m.key)?.mark.label)
+          .filter((l): l is string => Boolean(l)),
+      );
+      for (const entry of candidates) {
+        if (!usedKeys.has(entry.key) && entry.mark.label && matchedLabels.has(entry.mark.label)) {
+          usedKeys.add(entry.key);
+          void this.tabs.clear(entry.uri);
+        }
       }
     };
 
